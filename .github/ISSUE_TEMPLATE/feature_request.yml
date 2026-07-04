@@ -1,0 +1,16 @@
+name: Feature idea
+description: Suggest an improvement or a new program/engine
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: The idea
+      description: What would you like Rampset to do, and why?
+    validations:
+      required: true
+  - type: textarea
+    id: alt
+    attributes:
+      label: Alternatives or workarounds
+      description: Anything you've tried, or how you handle it today.

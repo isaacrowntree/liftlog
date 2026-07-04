@@ -1,0 +1,43 @@
+name: Bug report
+description: Something in Rampset isn't working right
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you expect, and what actually happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. …
+        2. …
+        3. …
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Which mode?
+      options:
+        - Program (5×5)
+        - Madcow
+        - Freeform routine
+        - Not sure / not applicable
+  - type: dropdown
+    id: how
+    attributes:
+      label: How are you running it?
+      options:
+        - Self-hosted on Cloudflare
+        - Local dev (npm run dev)
+        - Other
+  - type: input
+    id: env
+    attributes:
+      label: Browser / device
+      placeholder: e.g. iOS Safari 17 (installed PWA), Chrome on desktop

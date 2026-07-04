@@ -10,6 +10,12 @@
   Open-source · offline-first · self-hosted · MIT
 </p>
 
+<p align="center">
+  <a href="https://github.com/isaacrowntree/rampset/actions/workflows/ci.yml"><img src="https://github.com/isaacrowntree/rampset/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/PWA-offline--first-3d6dff.svg" alt="Offline-first PWA">
+</p>
+
 ---
 
 Rampset is a training log for people who lift a barbell. Guided **5×5** and

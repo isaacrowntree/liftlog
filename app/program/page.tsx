@@ -1,0 +1,515 @@
+"use client";
+
+import { useRef, useState } from "react";
+import { useLiveQuery } from "dexie-react-hooks";
+import { db, newId } from "@/db/db";
+import { useUser } from "@/state/UserContext";
+import { AppHeader } from "@/components/AppHeader";
+import { PageSkeleton } from "@/components/PageSkeleton";
+import { Sheet } from "@/components/Sheet";
+import { Stepper } from "@/components/Stepper";
+import { fmtWeight } from "@/lib/weightDisplay";
+import { scheduleBackup } from "@/lib/backupAfterEdit";
+import type {
+  ProgramExercise,
+  Exercise,
+  ProgramDay,
+  ProgramMode,
+} from "@/lib/types";
+
+export default function ProgramPage() {
+  const { user } = useUser();
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [addingDayId, setAddingDayId] = useState<string | null>(null);
+
+  const data = useLiveQuery(async () => {
+    if (!user) return null;
+    const program = await db.programs.where({ userId: user.id }).first();
+    if (!program) return null;
+    const days = await db.programDays
+      .where({ programId: program.id })
+      .sortBy("position");
+    const detail = new Map<string, { pe: ProgramExercise; ex: Exercise }[]>();
+    for (const day of days) {
+      const pes = await db.programExercises
+        .where({ programDayId: day.id })
+        .sortBy("position");
+      const rows: { pe: ProgramExercise; ex: Exercise }[] = [];
+      for (const pe of pes) {
+        const ex = await db.exercises.get(pe.exerciseId);
+        if (ex) rows.push({ pe, ex });
+      }
+      detail.set(day.id, rows);
+    }
+    const allExercises = await db.exercises.where({ userId: user.id }).sortBy("name");
+    return { program, days, detail, allExercises };
+  }, [user?.id]);
+
+  if (!user || !data) return <PageSkeleton title="Program" />;
+  const { program, days, detail, allExercises } = data;
+  const isProgression = program.mode === "progression";
+
+  // Program edits aren't in the finished-workout sync path — refresh the
+  // cloud snapshot so a new device restores them.
+  const onChanged = () => scheduleBackup(user.id, user.email);
+
+  const editingRow = editingId
+    ? [...detail.values()].flat().find((r) => r.pe.id === editingId)
+    : undefined;
+  const addingDay = addingDayId ? days.find((d) => d.id === addingDayId) : undefined;
+  const addingRows = addingDay ? detail.get(addingDay.id) ?? [] : [];
+
+  return (
+    <div className="pb-8">
+      <AppHeader
+        title="Program"
+        sub={`${program.name} · ${
+          program.mode === "progression"
+            ? "auto progression"
+            : program.mode === "madcow"
+              ? "weekly ramped progression"
+              : "last session prefills"
+        }`}
+      />
+      <div className="flex flex-col gap-3">
+        {days.map((day) => {
+          const rows = detail.get(day.id) ?? [];
+          return (
+            <section key={day.id} className="glass p-4">
+              <h2 className="disp mb-1 text-[15.5px]">{day.name}</h2>
+              <div className="divide-y divide-line/50">
+                {rows.map(({ pe, ex }) => (
+                  <button
+                    key={pe.id}
+                    onClick={() => setEditingId(pe.id)}
+                    aria-label={`Edit ${ex.name}`}
+                    className="flex w-full items-center justify-between gap-3 py-2.5 text-left active:opacity-70"
+                  >
+                    <span className="min-w-0 truncate text-[14.5px]">{ex.name}</span>
+                    <span className="mono flex-none text-[13px] text-ink-dim">
+                      {rowSummary(pe, ex, program.mode !== "routine")}
+                      <span className="ml-1.5 text-ink-faint">›</span>
+                    </span>
+                  </button>
+                ))}
+                {rows.length === 0 && (
+                  <p className="py-2 text-[13px] text-ink-faint">No exercises yet.</p>
+                )}
+              </div>
+              <button
+                onClick={() => setAddingDayId(day.id)}
+                className="mt-2 w-full rounded-xl border border-dashed border-line py-2 text-[13px] font-medium text-ink-dim"
+              >
+                + Add exercise
+              </button>
+            </section>
+          );
+        })}
+
+        <section className="glass p-4">
+          <h2 className="disp mb-1 text-[15.5px]">Progression</h2>
+          <p className="text-[13.5px] leading-relaxed text-ink-dim">
+            {isProgression
+              ? "Weights advance automatically after every successful workout, deload 10% after three fails, and drop 5×5 → 3×5 → 1×5 on repeated stalls. Tap any exercise to change its sets, reps, or starting weight."
+              : "No automatic progression — every set prefills from your last session, and you change the numbers as you go. Tap any exercise to change its sets or reps."}
+          </p>
+          {isProgression && (
+            <label className="mt-3 flex items-center justify-between border-t border-line pt-3">
+              <span>
+                <span className="block text-[14.5px] font-medium">Linked lifts</span>
+                <span className="block text-[12.5px] text-ink-faint">
+                  One chain per exercise: a squat success advances squat on
+                  every day (written-program behavior). Off keeps per-day
+                  weights.
+                </span>
+              </span>
+              <input
+                type="checkbox"
+                className="h-6 w-6 accent-[var(--accent)]"
+                checked={program.linkedProgression ?? false}
+                onChange={async (e) => {
+                  await db.programs.update(program.id, {
+                    linkedProgression: e.target.checked,
+                  });
+                  onChanged();
+                }}
+              />
+            </label>
+          )}
+        </section>
+      </div>
+
+      {editingRow && (
+        <ProgramExerciseSheet
+          pe={editingRow.pe}
+          ex={editingRow.ex}
+          mode={program.mode}
+          onChanged={onChanged}
+          onClose={() => setEditingId(null)}
+        />
+      )}
+      {addingDay && (
+        <AddExerciseSheet
+          userId={user.id}
+          day={addingDay}
+          mode={program.mode}
+          existingIds={new Set(addingRows.map((r) => r.ex.id))}
+          nextPosition={Math.max(-1, ...addingRows.map((r) => r.pe.position)) + 1}
+          allExercises={allExercises}
+          onChanged={onChanged}
+          onClose={() => setAddingDayId(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function rowSummary(pe: ProgramExercise, ex: Exercise, showWeight: boolean): string {
+  const weight =
+    showWeight && ex.kind === "weighted" && pe.workingWeightKg !== undefined
+      ? ` · ${fmtWeight(pe.workingWeightKg)}`
+      : "";
+
+  // Madcow rows ramp (and the intensity day mixes rep counts), so "6×5" would
+  // misread as flat sets — describe the day instead.
+  if (pe.madcowRole) {
+    const scheme =
+      pe.madcowRole === "intensity"
+        ? "ramp + PR"
+        : pe.madcowRole === "light"
+          ? `${pe.sets}×5 light`
+          : `${pe.sets}×5 ramp`;
+    return `${scheme}${weight}`;
+  }
+
+  const scheme = pe.targetSeconds
+    ? `${pe.sets}×${pe.targetSeconds}s`
+    : `${pe.sets}×${pe.targetReps ?? ""}`;
+  return `${scheme}${weight}`;
+}
+
+function ProgramExerciseSheet({
+  pe,
+  ex,
+  mode,
+  onChanged,
+  onClose,
+}: {
+  pe: ProgramExercise;
+  ex: Exercise;
+  mode: ProgramMode;
+  onChanged: () => void;
+  onClose: () => void;
+}) {
+  const timed = pe.targetSeconds !== undefined || ex.kind === "timed";
+  const weighted = ex.kind === "weighted";
+  const showWeight = weighted && mode === "progression";
+
+  const [draft, setDraft] = useState({
+    sets: pe.sets,
+    reps: pe.targetReps ?? 5,
+    seconds: pe.targetSeconds ?? 30,
+    restSeconds: pe.restSeconds ?? ex.restSeconds ?? 90,
+  });
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const [confirmRemove, setConfirmRemove] = useState(false);
+
+  const apply = (patch: (cur: typeof draft) => Partial<typeof draft>) => {
+    if (typeof navigator !== "undefined") navigator.vibrate?.(10);
+    const next = { ...draftRef.current, ...patch(draftRef.current) };
+    draftRef.current = next;
+    setDraft(next);
+    void db.programExercises
+      .update(pe.id, {
+        sets: next.sets,
+        ...(timed ? { targetSeconds: next.seconds } : { targetReps: next.reps }),
+        restSeconds: next.restSeconds,
+      })
+      .then(onChanged);
+  };
+
+  const remove = async () => {
+    await db.programExercises.delete(pe.id);
+    onChanged();
+    onClose();
+  };
+
+  return (
+    <Sheet label={`Edit ${ex.name}`} onClose={onClose}>
+      <div className="mb-3 flex items-baseline justify-between">
+        <h2 className="disp text-[19px]">{ex.name}</h2>
+        <button onClick={onClose} className="px-3 py-2 text-sm text-ink-dim">
+          Close
+        </button>
+      </div>
+
+      <div className="glass px-4 py-1.5">
+        <Stepper
+          label="Sets"
+          value={draft.sets}
+          display={String(draft.sets)}
+          onStep={(d) => apply((c) => ({ sets: clamp(c.sets + d, 1, 10) }))}
+        />
+        {timed ? (
+          <Stepper
+            label="Seconds"
+            value={draft.seconds}
+            display={`${draft.seconds}s`}
+            onStep={(d) => apply((c) => ({ seconds: clamp(c.seconds + d * 15, 15, 600) }))}
+          />
+        ) : (
+          <Stepper
+            label="Reps"
+            value={draft.reps}
+            display={String(draft.reps)}
+            onStep={(d) => apply((c) => ({ reps: clamp(c.reps + d, 1, 30) }))}
+          />
+        )}
+        <Stepper
+          label="Rest"
+          value={draft.restSeconds}
+          display={fmtRest(draft.restSeconds)}
+          onStep={(d) => apply((c) => ({ restSeconds: clamp(c.restSeconds + d * 15, 0, 600) }))}
+        />
+      </div>
+
+      {showWeight && (
+        <div className="mt-3 flex items-center justify-between glass px-4 py-3">
+          <span className="text-[14px] text-ink-dim">Starting weight</span>
+          <WeightField pe={pe} ex={ex} onChanged={onChanged} />
+        </div>
+      )}
+      {weighted && mode === "routine" && (
+        <p className="mt-2 px-1 text-[12px] text-ink-faint">
+          Weights prefill from your last session — set them as you train.
+        </p>
+      )}
+      {weighted && mode === "madcow" && (
+        <p className="mt-2 px-1 text-[12px] text-ink-faint">
+          Madcow ramps each set to your top; the top advances weekly on the
+          Friday PR set.
+        </p>
+      )}
+
+      <button
+        onClick={() => {
+          if (confirmRemove) void remove();
+          else setConfirmRemove(true);
+        }}
+        className={`mt-5 w-full rounded-full py-3.5 text-[15px] font-semibold ${
+          confirmRemove ? "bg-plate-25 text-white" : "glass text-plate-25"
+        }`}
+      >
+        {confirmRemove ? `Remove ${ex.name} — tap to confirm` : "Remove from program"}
+      </button>
+    </Sheet>
+  );
+}
+
+/** Weight input with an assist toggle (iOS's decimal keypad has no minus
+ * key, so assisted/negative weights need an explicit control). */
+function WeightField({
+  pe,
+  ex,
+  onChanged,
+}: {
+  pe: ProgramExercise;
+  ex: Exercise;
+  onChanged: () => void;
+}) {
+  const stored = pe.workingWeightKg ?? 0;
+  const [assisted, setAssisted] = useState(stored < 0);
+
+  const save = async (magnitude: number, assist: boolean) => {
+    await db.programExercises.update(pe.id, {
+      workingWeightKg: assist ? -Math.abs(magnitude) : Math.abs(magnitude),
+    });
+    onChanged();
+  };
+
+  return (
+    <span className="mono flex items-center gap-1.5 text-[13px] text-ink">
+      <button
+        aria-pressed={assisted}
+        aria-label={`${ex.name}: assisted — machine takes weight off`}
+        onClick={() => {
+          const next = !assisted;
+          setAssisted(next);
+          if (stored !== 0) void save(Math.abs(stored), next);
+        }}
+        className={`rounded-full border px-2 py-0.5 text-[10.5px] ${
+          assisted ? "border-accent bg-accent-soft text-accent" : "border-line text-ink-faint"
+        }`}
+      >
+        assist
+      </button>
+      {assisted && <span aria-hidden>−</span>}
+      <input
+        className="setfield max-w-[72px]"
+        autoComplete="off"
+        autoCorrect="off"
+        spellCheck={false}
+        onFocus={(e) => e.currentTarget.select()}
+        type="number"
+        inputMode="decimal"
+        step="0.5"
+        enterKeyHint="done"
+        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+        aria-label={`${ex.name} starting weight in kg${assisted ? " (assistance)" : ""}`}
+        defaultValue={Math.abs(stored)}
+        onBlur={async (e) => {
+          const raw = e.target.value.trim();
+          const v = Number(raw);
+          if (raw === "" || !Number.isFinite(v)) {
+            e.target.value = String(Math.abs(stored));
+            return;
+          }
+          const assist = assisted || v < 0;
+          if (assist !== assisted) setAssisted(assist);
+          e.target.value = String(Math.abs(v));
+          await save(v, assist);
+        }}
+      />
+      kg
+    </span>
+  );
+}
+
+function AddExerciseSheet({
+  userId,
+  day,
+  mode,
+  existingIds,
+  nextPosition,
+  allExercises,
+  onChanged,
+  onClose,
+}: {
+  userId: string;
+  day: ProgramDay;
+  mode: ProgramMode;
+  existingIds: Set<string>;
+  nextPosition: number;
+  allExercises: Exercise[];
+  onChanged: () => void;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [kind, setKind] = useState<Exercise["kind"]>("weighted");
+  const [busy, setBusy] = useState(false);
+  const available = allExercises.filter((e) => !existingIds.has(e.id));
+
+  const createPe = async (ex: Exercise) => {
+    const timed = ex.kind === "timed";
+    const weighted = ex.kind === "weighted";
+    await db.programExercises.add({
+      id: newId(),
+      programDayId: day.id,
+      exerciseId: ex.id,
+      position: nextPosition,
+      sets: 3,
+      targetReps: timed ? undefined : 5,
+      targetSeconds: timed ? 30 : undefined,
+      ...(mode === "progression" && weighted
+        ? { workingWeightKg: 20, incrementKg: 2.5, deloadPct: 0.1, deloadAfterFails: 3 }
+        : {}),
+    });
+  };
+
+  const addExisting = async (ex: Exercise) => {
+    if (busy) return;
+    setBusy(true);
+    await createPe(ex);
+    onChanged();
+    onClose();
+  };
+
+  const createNew = async () => {
+    if (busy || !name.trim()) return;
+    setBusy(true);
+    const ex: Exercise = {
+      id: newId(),
+      userId,
+      name: name.trim(),
+      kind,
+      restSeconds: 90,
+    };
+    await db.exercises.add(ex);
+    await createPe(ex);
+    onChanged();
+    onClose();
+  };
+
+  return (
+    <Sheet label={`Add exercise to ${day.name}`} onClose={onClose}>
+      <h2 className="disp mb-3 text-[19px]">Add to {day.name}</h2>
+
+      {available.length > 0 && (
+        <>
+          <p className="eyebrow mb-1.5">From your exercises</p>
+          <div className="mb-5 flex flex-col gap-1.5">
+            {available.map((ex) => (
+              <button
+                key={ex.id}
+                onClick={() => void addExisting(ex)}
+                disabled={busy}
+                className="flex items-center justify-between glass px-4 py-3 text-left disabled:opacity-60"
+              >
+                <span className="text-[14.5px]">{ex.name}</span>
+                <span className="mono text-[12px] capitalize text-ink-faint">{ex.kind}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      <p className="eyebrow mb-1.5">Create new</p>
+      <input
+        className="mb-2 w-full rounded-xl border border-line bg-white/5 px-4 py-3 text-base text-ink placeholder:text-ink-faint"
+        autoComplete="off"
+        autoCorrect="off"
+        enterKeyHint="done"
+        placeholder="Exercise name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && void createNew()}
+        data-selectable
+      />
+      <div className="mb-3 grid grid-cols-3 gap-2">
+        {(["weighted", "bodyweight", "timed"] as const).map((k) => (
+          <button
+            key={k}
+            onClick={() => setKind(k)}
+            className={`rounded-xl border py-2 text-[12.5px] capitalize ${
+              kind === k
+                ? "border-accent bg-accent-soft text-accent"
+                : "border-line text-ink-dim"
+            }`}
+          >
+            {k}
+          </button>
+        ))}
+      </div>
+      <button
+        onClick={() => void createNew()}
+        disabled={busy || !name.trim()}
+        className="w-full rounded-full bg-accent py-3.5 text-[15px] font-semibold text-white disabled:opacity-50"
+      >
+        Add exercise
+      </button>
+    </Sheet>
+  );
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, v));
+}
+
+function fmtRest(s: number): string {
+  if (s <= 0) return "off";
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return r ? `${m}:${String(r).padStart(2, "0")}` : `${m}:00`;
+}

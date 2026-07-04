@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rampset — the barbell log you own</title>
+<meta name="description" content="An open-source barbell strength log you actually own. Reshape or rewrite the 5×5 and Madcow engines, keep your data on your own device and cloud, and never get locked in. Self-hostable PWA.">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('rs-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark')}catch(e){document.documentElement.dataset.theme='dark'}</script>
+<meta property="og:title" content="Rampset — the barbell log you own">
+<meta property="og:description" content="Open-source & self-hosted. Reshape the 5×5 / Madcow engines or write your own, own your data, no lock-in. Guided programs, plate math, PR tracking.">
+<meta property="og:type" content="website">
+<style>
+  :root{
+    --oled:#000; --ink:#f2f3f5; --ink-dim:#9aa0ab; --ink-faint:#7d838e;
+    --accent:#3d6dff; --green:#34c979; --gold:#f2c21b; --red:#e8433f;
+    --line:#26272d; --surface:#131417;
+    --maxw:1080px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto} *{animation:none!important;transition:none!important}}
+  body{
+    margin:0; background:var(--oled); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI","Helvetica Neue",sans-serif;
+    -webkit-font-smoothing:antialiased; line-height:1.55; overflow-x:hidden;
+  }
+  /* ambient accent aura, like the app */
+  body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+    background:
+      radial-gradient(48rem 48rem at 82% -12%, rgba(61,109,255,.16), transparent 60%),
+      radial-gradient(40rem 40rem at -18% 8%, rgba(52,201,121,.06), transparent 60%);}
+  a{color:inherit}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
+  .mono{font-family:ui-monospace,"SF Mono",Menlo,monospace}
+  .eyebrow{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12px;letter-spacing:.18em;
+    text-transform:uppercase;color:var(--ink-faint)}
+  .disp{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",sans-serif;
+    font-weight:800;letter-spacing:-.02em;line-height:1.04}
+  .glass{border-radius:24px;border:1px solid rgba(255,255,255,.1);
+    background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.02));
+    backdrop-filter:blur(20px) saturate(150%);-webkit-backdrop-filter:blur(20px) saturate(150%)}
+  .btn{display:inline-flex;align-items:center;gap:.5em;border-radius:999px;padding:14px 22px;
+    font-size:15px;font-weight:600;text-decoration:none;transition:transform .12s ease,opacity .12s ease}
+  .btn:active{transform:scale(.97)}
+  .btn-primary{background:var(--accent);color:#fff;box-shadow:0 10px 34px rgba(61,109,255,.35),inset 0 1px 0 rgba(255,255,255,.35)}
+  .btn-ghost{border:1px solid var(--line);color:var(--ink);background:rgba(255,255,255,.02)}
+  a.btn:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:8px}
+
+  /* nav */
+  nav{position:sticky;top:0;z-index:50;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    background:rgba(0,0,0,.55);border-bottom:1px solid var(--line)}
+  .navrow{display:flex;align-items:center;justify-content:space-between;height:64px}
+  .navlinks{display:flex;align-items:center;gap:22px;font-size:14px;color:var(--ink-dim)}
+  .navlinks a{text-decoration:none}
+  .navlinks a:hover{color:var(--ink)}
+  @media(max-width:640px){.navlinks .hide-sm{display:none}}
+
+  /* hero */
+  header{padding:72px 0 40px}
+  .hero{display:grid;grid-template-columns:1.05fr .95fr;gap:40px;align-items:center}
+  @media(max-width:860px){.hero{grid-template-columns:1fr;gap:36px;text-align:center}}
+  h1{font-size:clamp(40px,7vw,68px);margin:16px 0 0}
+  h1 .u{color:var(--accent)}
+  .lede{font-size:clamp(17px,2.4vw,20px);color:var(--ink-dim);max-width:34ch;margin:20px 0 0}
+  @media(max-width:860px){.lede{margin-inline:auto}}
+  .cta{display:flex;gap:12px;flex-wrap:wrap;margin-top:30px}
+  @media(max-width:860px){.cta{justify-content:center}}
+  .phone{justify-self:end;position:relative;width:min(300px,78vw)}
+  @media(max-width:860px){.phone{justify-self:center}}
+  .phone img{width:100%;display:block;border-radius:34px;border:1px solid rgba(255,255,255,.14);
+    box-shadow:0 30px 80px rgba(0,0,0,.6),0 0 0 1px rgba(0,0,0,.5)}
+  .phone::after{content:"";position:absolute;inset:-8% -8% -14%;z-index:-1;
+    background:radial-gradient(60% 55% at 50% 40%,rgba(61,109,255,.28),transparent 70%);filter:blur(8px)}
+
+  /* value strip */
+  .values{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:56px 0}
+  @media(max-width:860px){.values{grid-template-columns:repeat(2,1fr)}}
+  .val{padding:20px}
+  .val .k{font-size:15px;font-weight:650;margin:10px 0 4px}
+  .val .d{font-size:13.5px;color:var(--ink-dim)}
+  .dot{width:9px;height:9px;border-radius:3px;display:inline-block}
+
+  /* feature rows */
+  section.feat{padding:56px 0;border-top:1px solid var(--line)}
+  .frow{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center}
+  .frow.rev .shot{order:2}
+  @media(max-width:860px){.frow,.frow.rev{grid-template-columns:1fr;gap:28px}.frow.rev .shot{order:0}}
+  .frow h2{font-size:clamp(26px,4vw,36px);margin:14px 0 0}
+  .frow p{color:var(--ink-dim);font-size:16px;margin:16px 0 0;max-width:46ch}
+  .shot img{width:min(280px,72vw);display:block;border-radius:28px;border:1px solid rgba(255,255,255,.12);
+    box-shadow:0 24px 60px rgba(0,0,0,.5);margin:0 auto}
+  ul.ticks{list-style:none;padding:0;margin:20px 0 0;font-size:15px;color:var(--ink-dim)}
+  ul.ticks li{display:flex;gap:10px;padding:5px 0}
+  ul.ticks li::before{content:"";flex:0 0 auto;width:7px;height:7px;border-radius:2px;background:var(--accent);margin-top:8px}
+
+  /* self-host */
+  section.host{padding:72px 0;border-top:1px solid var(--line)}
+  .steps{display:grid;grid-template-columns:1.1fr 1fr;gap:40px;align-items:start;margin-top:28px}
+  @media(max-width:860px){.steps{grid-template-columns:1fr}}
+  ol.stepl{counter-reset:s;list-style:none;padding:0;margin:0}
+  ol.stepl li{counter-increment:s;position:relative;padding:0 0 22px 46px}
+  ol.stepl li::before{content:counter(s);position:absolute;left:0;top:-2px;width:30px;height:30px;border-radius:9px;
+    display:grid;place-items:center;font-family:ui-monospace,monospace;font-size:14px;font-weight:600;
+    color:var(--accent);border:1px solid var(--line);background:rgba(61,109,255,.08)}
+  ol.stepl b{font-weight:650}
+  ol.stepl .m{color:var(--ink-dim);font-size:14.5px}
+  .term{border-radius:18px;border:1px solid var(--line);background:#0b0c0e;overflow:hidden;font-size:13px}
+  .term .bar{display:flex;gap:7px;padding:12px 14px;border-bottom:1px solid var(--line)}
+  .term .bar i{width:11px;height:11px;border-radius:50%;display:block}
+  .term pre{margin:0;padding:16px;overflow-x:auto;line-height:1.7;color:#cfd3da;
+    font-family:ui-monospace,"SF Mono",Menlo,monospace}
+  .term .c{color:var(--ink-faint)} .term .g{color:var(--green)} .term .b{color:var(--accent)}
+
+  .tbtn{width:34px;height:34px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.03);
+    color:var(--ink-dim);font-size:15px;cursor:pointer;display:grid;place-items:center;transition:color .12s,transform .12s}
+  .tbtn:hover{color:var(--ink)} .tbtn:active{transform:scale(.92)}
+  .tbtn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+  /* ————— light skin: the app has one, so the site does too ————— */
+  :root[data-theme="light"]{--oled:#f2f2f6;--ink:#16171b;--ink-dim:#55585f;--ink-faint:#696c74;--line:#dadade;--surface:#fff}
+  [data-theme="light"] body::before{background:radial-gradient(46rem 46rem at 82% -12%,rgba(61,109,255,.10),transparent 60%);opacity:.75}
+  [data-theme="light"] nav{background:rgba(242,242,246,.72)}
+  [data-theme="light"] .glass{border-color:rgba(0,0,0,.08);background:linear-gradient(180deg,rgba(255,255,255,.85),rgba(255,255,255,.62))}
+  [data-theme="light"] .btn-ghost{background:rgba(0,0,0,.02)}
+  [data-theme="light"] .tbtn{background:rgba(0,0,0,.03)}
+  [data-theme="light"] .phone img,[data-theme="light"] .shot img{border-color:rgba(0,0,0,.1);box-shadow:0 24px 60px rgba(0,0,0,.16)}
+  [data-theme="light"] .phone::after{background:radial-gradient(60% 55% at 50% 40%,rgba(61,109,255,.16),transparent 70%)}
+  /* terminal stays dark in both themes — it's a terminal */
+  [data-theme="light"] .term{border-color:#2b2e35}
+
+  footer{border-top:1px solid var(--line);padding:44px 0;color:var(--ink-faint);font-size:13.5px}
+  .fr{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;align-items:center}
+  footer a{color:var(--ink-dim);text-decoration:none}
+  footer a:hover{color:var(--ink)}
+  .disclaim{margin-top:14px;max-width:60ch}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap navrow">
+    <img class="logoimg" src="assets/rampset-logo.svg" alt="Rampset" height="26">
+    <div class="navlinks">
+      <a href="#features" class="hide-sm">Features</a>
+      <a href="#selfhost" class="hide-sm">Self-host</a>
+      <a href="https://github.com/isaacrowntree/rampset">GitHub</a>
+      <button id="themeBtn" class="tbtn" type="button" aria-label="Switch between light and dark">☾</button>
+    </div>
+  </div>
+</nav>
+
+<header>
+  <div class="wrap hero">
+    <div>
+      <span class="eyebrow">Open-source · yours to keep · self-hosted</span>
+      <h1 class="disp">Your lifts. Your data. <span class="u">Your rules.</span></h1>
+      <p class="lede">An open-source barbell log you actually own. Reshape the 5×5 and Madcow engines — or write your own — keep every rep on your device, and export it anytime. Not at the mercy of Google, Apple, or someone else's product roadmap.</p>
+      <div class="cta">
+        <a class="btn btn-primary" href="https://github.com/isaacrowntree/rampset">View on GitHub →</a>
+        <a class="btn btn-ghost" href="#selfhost">Run your own</a>
+      </div>
+    </div>
+    <div class="phone"><img id="heroPhone" src="assets/shots/u1-home.png" alt="Rampset home screen showing the next workout"></div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="values">
+    <div class="val glass"><span class="dot" style="background:var(--accent)"></span><div class="k">You own it</div><div class="d">MIT-licensed, self-hosted. Your data lives on your device and your own cloud — export it all to CSV whenever.</div></div>
+    <div class="val glass"><span class="dot" style="background:var(--green)"></span><div class="k">Editable to the core</div><div class="d">Tweak any program, rewrite the progression engines, or build your own. Every set, rep, and rule is yours to change.</div></div>
+    <div class="val glass"><span class="dot" style="background:var(--gold)"></span><div class="k">No lock-in, ever</div><div class="d">No subscription, no account to lose, no sunset. It can't be taken away or quietly enshittified out from under you.</div></div>
+    <div class="val glass"><span class="dot" style="background:var(--red)"></span><div class="k">Real training, built in</div><div class="d">Guided 5×5 and Madcow with auto weight jumps, deloads, plate math, warm-up ramps, and PR tracking — offline.</div></div>
+  </div>
+</div>
+
+<div id="features">
+<section class="feat"><div class="wrap"><div class="frow">
+  <div class="shot"><img src="assets/shots/u1-workout.png" alt="Program workout with tap-cycle plate circles"></div>
+  <div>
+    <span class="eyebrow">Program mode</span>
+    <h2 class="disp">Tap a plate. Set logged.</h2>
+    <p>Each set is a plate you cycle with a tap — full reps, missed reps, skipped. The bar’s working weight, warm-up ramp, and per-side plate math are already worked out. You confirm; the app tracks.</p>
+    <ul class="ticks"><li>Automatic +weight on success, deload after repeated fails</li><li>Warm-up ramps and empty-bar sets built in</li><li>Rest timer with a bell — counts through your set</li></ul>
+  </div>
+</div></div></section>
+
+<section class="feat"><div class="wrap"><div class="frow rev">
+  <div class="shot"><img src="assets/shots/mc-fri-intensity.png" alt="Madcow intensity day ramp checklist with a highlighted top set"></div>
+  <div>
+    <span class="eyebrow">The ramp</span>
+    <h2 class="disp">Ramped sets, done right.</h2>
+    <p>Madcow and heavy days climb to a top set, then a PR set and a back-off — prescribed, checked off one tap at a time, with the top set called out. The name isn’t decoration: <em>ramping</em> is how the engine progresses you.</p>
+    <ul class="ticks"><li>Heavy / light / intensity days, each with its own scheme</li><li>The Friday PR sets next week’s top automatically</li><li>Freeform routine mode too — every set prefilled from last time</li></ul>
+  </div>
+</div></div></section>
+
+<section class="feat"><div class="wrap"><div class="frow">
+  <div class="shot"><img src="assets/shots/u1-progress.png" alt="Progress screen with e1RM, volume, and personal-record stars"></div>
+  <div>
+    <span class="eyebrow">Progress</span>
+    <h2 class="disp">See the line go up.</h2>
+    <p>Estimated 1RM, top set, volume and total reps per lift — with a gold star the moment you beat an all-time best. Tap any lift for the full picture; the history calendar shows every session at a glance.</p>
+    <ul class="ticks"><li>Personal records detected and marked, in Progress and History</li><li>Body-weight trend tracked alongside the lifts</li><li>Import your existing StrongLifts or Strong export via CSV</li></ul>
+  </div>
+</div></div></section>
+</div>
+
+<section id="selfhost" class="host"><div class="wrap">
+  <span class="eyebrow">Self-host</span>
+  <h2 class="disp" style="font-size:clamp(28px,4.5vw,42px);margin:12px 0 0">Run your own in ~10 minutes.</h2>
+  <p style="color:var(--ink-dim);max-width:52ch;margin-top:14px">Rampset deploys to Cloudflare’s free tier — Workers to serve the app, Cloudflare Access (also free) to put a login in front. No servers, no monthly bill for a household.</p>
+  <div class="steps">
+    <ol class="stepl">
+      <li><b>Fork &amp; clone</b> the repo, then <span class="mono" style="color:var(--ink-dim)">npm install</span>.</li>
+      <li><b>Add your lifters.</b> <span class="m">Copy <span class="mono">.env.example</span> → <span class="mono">.env.local</span> and set names, units, and starting weights. No personal data lives in the repo.</span></li>
+      <li><b>Deploy to Cloudflare Workers.</b> <span class="m">One command via the OpenNext adapter. Free tier is plenty for a few users.</span></li>
+      <li><b>Put Cloudflare Access in front.</b> <span class="m">A free zero-trust login (email code or Google) so only your people get in — that’s your auth, no passwords to manage.</span></li>
+    </ol>
+    <div class="term" role="img" aria-label="Terminal showing the setup commands">
+      <div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+<pre><span class="c"># get it running locally</span>
+git clone https://github.com/you/rampset
+cd rampset && npm install
+cp .env.example .env.local   <span class="c"># edit your lifters</span>
+npm run dev                  <span class="c"># → localhost:3000</span>
+
+<span class="c"># ship it to Cloudflare Workers</span>
+npm run deploy
+
+<span class="g">✓</span> deployed to <span class="b">rampset.you.workers.dev</span>
+<span class="c"># then add Cloudflare Access (free) in the
+# dashboard to gate it to your emails.</span></pre>
+    </div>
+  </div>
+</div></section>
+
+<section class="feat"><div class="wrap"><div class="frow rev">
+  <div class="shot"><img src="assets/shots/u2-home.png" alt="Rampset in its light skin"></div>
+  <div>
+    <span class="eyebrow">Made for a household</span>
+    <h2 class="disp">Two lifters, one engine.</h2>
+    <p>Each person gets their own accent colour and skin — OLED black or clean light — their own program, and their own history. One install on the shared home screen; switch with a tap.</p>
+    <div class="cta"><a class="btn btn-primary" href="https://github.com/isaacrowntree/rampset">Get Rampset →</a></div>
+  </div>
+</div></div></section>
+
+<footer><div class="wrap">
+  <div class="fr">
+    <img class="logoimg" src="assets/rampset-logo.svg" alt="Rampset" height="22">
+    <div style="display:flex;gap:22px">
+      <a href="https://github.com/isaacrowntree/rampset">GitHub</a>
+      <a href="https://github.com/isaacrowntree/rampset#readme">Docs</a>
+      <a href="https://github.com/isaacrowntree/rampset/blob/main/LICENSE">MIT License</a>
+    </div>
+  </div>
+  <p class="disclaim">Rampset is an independent open-source project. “StrongLifts” and “Madcow” refer to well-known training methods and are not affiliated with or endorsed by this project.</p>
+</div></footer>
+
+<script>
+  (function(){
+    var html=document.documentElement, btn=document.getElementById('themeBtn'), hero=document.getElementById('heroPhone');
+    function sync(){var l=html.dataset.theme==='light';btn.textContent=l?'☀':'☾';
+      if(hero)hero.src=l?'assets/shots/u2-home.png':'assets/shots/u1-home.png';
+      document.querySelectorAll('.logoimg').forEach(function(img){
+        img.src=l?'assets/rampset-logo-light.svg':'assets/rampset-logo.svg';});}
+    sync();
+    btn.addEventListener('click',function(){
+      html.dataset.theme=html.dataset.theme==='light'?'dark':'light';
+      try{localStorage.setItem('rs-theme',html.dataset.theme)}catch(e){}
+      sync();
+    });
+  })();
+</script>
+
+</body>
+</html>

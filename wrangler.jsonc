@@ -1,0 +1,61 @@
+/**
+ * LiftLog on Cloudflare Workers via @opennextjs/cloudflare.
+ * https://opennext.js.org/cloudflare
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "liftlog",
+  "account_id": "REPLACE_WITH_YOUR_CLOUDFLARE_ACCOUNT_ID",
+  "main": "custom-worker.ts",
+  "compatibility_date": "2026-06-01",
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public"
+  ],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "routes": [
+    {
+      "pattern": "liftlog.zackdesign.biz",
+      "custom_domain": true
+    }
+  ],
+  "services": [
+    {
+      // Self-reference service binding required by the OpenNext cache layer.
+      // The service name must match this worker's name.
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "liftlog"
+    }
+  ],
+  "images": {
+    "binding": "IMAGES"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        // One journal per user — the ordering point for device sync.
+        "name": "SYNC_JOURNAL",
+        "class_name": "SyncJournal"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["SyncJournal"]
+    }
+  ],
+  "r2_buckets": [
+    {
+      // Per-user backup snapshots, keyed by Access identity.
+      "binding": "BACKUPS",
+      "bucket_name": "liftlog-backups"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

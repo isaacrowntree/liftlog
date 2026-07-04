@@ -1,0 +1,16 @@
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+.DS_Store
+
+# cloudflare / opennext
+.open-next/
+.wrangler/
+.dev.vars*
+
+# personal data — never committed
+.env
+.env*.local
+private/

@@ -1,0 +1,326 @@
+@import "tailwindcss";
+
+/* ————— LiftLog design tokens: the palette is the plates (IWF) ————— */
+:root {
+  --plate-25: #e8433f;
+  --plate-20: #3d6dff;
+  --plate-15: #f2c21b;
+  --plate-10: #34c979;
+  --plate-5: #eaeaea;
+
+  --oled: #000000;
+  --surface: #131417;
+  --surface-2: #1c1d22;
+  --line: #26272d;
+  --ink: #f2f3f5;
+  --ink-dim: #9aa0ab;
+  --ink-faint: #7d838e; /* ≥4.5:1 on black and on --surface */
+
+  /* Per-user accent, set on <body data-accent>. */
+  --accent: var(--plate-20);
+  --accent-soft: rgba(61, 109, 255, 0.14);
+  --accent-glow: rgba(61, 109, 255, 0.35);
+}
+
+body[data-accent="green"] {
+  --accent: var(--plate-10);
+  --accent-soft: rgba(52, 201, 121, 0.13);
+  --accent-glow: rgba(52, 201, 121, 0.35);
+}
+
+@theme inline {
+  --color-oled: var(--oled);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-ink-dim: var(--ink-dim);
+  --color-ink-faint: var(--ink-faint);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-plate-25: var(--plate-25);
+  --color-plate-20: var(--plate-20);
+  --color-plate-15: var(--plate-15);
+  --color-plate-10: var(--plate-10);
+}
+
+:root {
+  color-scheme: dark; /* dark keyboard, pickers, scrollbars on iOS/Android */
+}
+
+/* ————— Light skin (per-user: the Strong-style routine variant) —————
+ * Overrides the palette tokens and the glass material; every surface reads
+ * from these vars, so the whole app re-skins from here. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --oled: #f2f2f6;
+  --surface: #ffffff;
+  --surface-2: #ececef;
+  --line: #d6d6db;
+  --ink: #16171b;
+  --ink-dim: #55585f;
+  --ink-faint: #696c74; /* ≥4.5:1 on the light background */
+  --accent-soft: rgba(61, 109, 255, 0.12);
+}
+:root[data-theme="light"] body[data-accent="green"] {
+  --accent-soft: rgba(52, 201, 121, 0.15);
+}
+
+html {
+  background: var(--oled);
+  /* Kill pull-to-refresh + rubber-band glow at the viewport (body no longer
+   * propagates this to the viewport in modern Chrome). */
+  overscroll-behavior: none;
+  /* Keep focused inputs clear of the fixed timer bar / dock. */
+  scroll-padding-bottom: 7.5rem;
+}
+
+body {
+  background: var(--oled);
+  color: var(--ink);
+  cursor: default; /* app chrome: no I-beam on labels/numbers (iPad/desktop) */
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
+    "Helvetica Neue", sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+  /* App, not document: no text selection or long-press callouts on chrome. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Text entry (and anything explicitly copyable) stays selectable. */
+input,
+textarea,
+[data-selectable] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* No double-tap smart-zoom / tap delay on controls (not inherited — must
+ * target the elements). Pinch-zoom on content still works. */
+button,
+a,
+input,
+label,
+[role="button"],
+[role="tab"] {
+  touch-action: manipulation;
+}
+
+/* Native-feeling pressed state everywhere (tap highlight is disabled, so
+ * every control must answer the finger itself). Utilities may override. */
+@media (hover: none) {
+  button:active,
+  a:active,
+  [role="button"]:active {
+    transform: scale(0.96);
+    opacity: 0.85;
+  }
+}
+button,
+a {
+  transition:
+    transform 120ms ease,
+    opacity 120ms ease;
+  -webkit-user-drag: none;
+}
+img,
+svg {
+  -webkit-user-drag: none;
+}
+
+/* Ambient light behind the glass: two barely-there auras in the user's
+ * accent so blurred surfaces have something to refract. Fixed, so scrolling
+ * content slides across the light. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(42rem 42rem at 85% -10%, var(--accent-soft), transparent 60%),
+    radial-gradient(36rem 36rem at -15% 45%, rgba(255, 255, 255, 0.04), transparent 60%);
+}
+
+/* Big display numbers — Archivo expanded heavy. */
+.disp {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI",
+    "Helvetica Neue", sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.mono {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ————— Liquid Glass material ————— */
+@layer components {
+.glass {
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.07),
+    rgba(255, 255, 255, 0.035)
+  );
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    0 8px 32px rgba(0, 0, 0, 0.35);
+}
+
+/* Floating chrome (dock, timer, sheets): denser blur, brighter lip. */
+.glass-strong {
+  border-radius: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: linear-gradient(
+    180deg,
+    rgba(40, 42, 48, 0.72),
+    rgba(22, 23, 27, 0.66)
+  );
+  backdrop-filter: blur(36px) saturate(180%);
+  -webkit-backdrop-filter: blur(36px) saturate(180%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 16px 48px rgba(0, 0, 0, 0.55);
+}
+}
+
+/* The liquid lens that glides behind the active dock tab. Percent-based
+ * translate keeps it aligned while the dock itself resizes. */
+.dock-lens {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.16),
+    rgba(255, 255, 255, 0.07)
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 -0.5px 0 rgba(255, 255, 255, 0.06),
+    0 2px 10px rgba(0, 0, 0, 0.3);
+  transition: transform 420ms cubic-bezier(0.28, 1.25, 0.42, 1);
+}
+
+/* SF-symbol-style select bounce. */
+@keyframes tab-bounce {
+  30% {
+    transform: scale(1.16);
+  }
+  62% {
+    transform: scale(0.95);
+  }
+}
+
+/* Light skin: frosted white panels instead of white-on-black glass, and a
+ * quieter aura (the OLED depth glow reads as haze on white). Unlayered, so
+ * these win over the @layer components base regardless of specificity. */
+:root[data-theme="light"] body::before {
+  background:
+    radial-gradient(42rem 42rem at 85% -10%, var(--accent-soft), transparent 60%);
+  opacity: 0.65;
+}
+:root[data-theme="light"] .glass {
+  border-color: rgba(0, 0, 0, 0.08);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.75),
+    rgba(255, 255, 255, 0.55)
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 8px 28px rgba(0, 0, 0, 0.1);
+}
+:root[data-theme="light"] .glass-strong {
+  border-color: rgba(0, 0, 0, 0.1);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.9),
+    rgba(255, 255, 255, 0.8)
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    0 16px 40px rgba(0, 0, 0, 0.16);
+}
+:root[data-theme="light"] input.setfield {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+}
+@keyframes sheet-backdrop {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes route-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  font-weight: 600;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Numeric inputs in set rows: quiet until touched. */
+input.setfield {
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  color: var(--ink);
+  text-align: center;
+  width: 100%;
+  padding: 7px 0;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  /* 16px floor: anything smaller makes iOS zoom the page on focus. */
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+input.setfield:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+input.setfield::placeholder {
+  color: var(--ink-faint);
+}
+/* hide number spinners */
+input.setfield::-webkit-outer-spin-button,
+input.setfield::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input.setfield[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}

@@ -98,7 +98,8 @@ templates. Switch lifters with the avatar in the header (or Settings → Account
 
 - **Next.js 16 App Router**, all screens client components.
 - **IndexedDB (Dexie)** is the on-device source of truth — fully functional
-  offline. Optional cloud backups via Cloudflare Workers + R2.
+  offline. Optional cross-device **sync** (a per-user SQLite Durable Object that
+  orders each user's ops) and **backups** (R2 snapshots) via Cloudflare Workers.
 - **Engines** are pure, unit-tested functions in `src/lib/`: linear progression
   + deload, Madcow ramps, routine prefill, plate-per-side math, Epley e1RM,
   PR detection. Editing them is the point — start there.

@@ -1,8 +1,8 @@
-/* LiftLog service worker: network-first for navigations with cache fallback,
+/* Rampset service worker: network-first for navigations with cache fallback,
  * cache-first for static assets. The data layer lives in IndexedDB, so the
  * shell is all we need to make the app open in a gym dead zone. */
 
-const CACHE = "liftlog-shell-v3";
+const CACHE = "rampset-shell-v4";
 const PRECACHE = ["/", "/manifest.webmanifest", "/icon.svg"];
 
 /** Gym dead zones don't fail fetches — they hang them. Anything

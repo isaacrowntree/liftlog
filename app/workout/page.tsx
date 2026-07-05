@@ -200,12 +200,6 @@ function WorkoutScreen() {
               <circle cx="19" cy="12" r="1.9" />
             </svg>
           </button>
-          <button
-            onClick={askFinish}
-            className="px-2 py-2 text-[15px] font-semibold text-plate-10"
-          >
-            Finish
-          </button>
           {menuOpen && (
             <>
               <button
@@ -278,6 +272,15 @@ function WorkoutScreen() {
         // Strong-style: count down the exercise's rest, done at zero.
         <RoutineWorkout session={session} onSetDone={(s) => timer.start(s, "down")} />
       )}
+
+      {/* Primary action lives at the end of the set list — finish once the
+          last set is logged, rather than reaching for the header. */}
+      <button
+        onClick={askFinish}
+        className="mt-8 block w-full rounded-full bg-plate-10 py-4 text-center text-base font-semibold text-black shadow-[0_10px_36px_rgba(52,201,121,0.3),inset_0_1px_0_rgba(255,255,255,0.35)] transition-transform active:scale-[.99]"
+      >
+        Finish workout
+      </button>
 
       {confirmingFinish && (
         <ConfirmSheet

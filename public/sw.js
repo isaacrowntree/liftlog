@@ -2,8 +2,13 @@
  * cache-first for static assets. The data layer lives in IndexedDB, so the
  * shell is all we need to make the app open in a gym dead zone. */
 
-const CACHE = "rampset-shell-v5";
-const PRECACHE = ["/", "/manifest.webmanifest", "/icon.svg"];
+const CACHE = "rampset-shell-v6";
+/** The shell must cache or offline is broken — fail install if it can't. */
+const CORE = ["/", "/manifest.webmanifest", "/icon.svg"];
+/** Every tab's document, so a COLD offline navigation (e.g. tapping History
+ * straight after a gym workout, having never opened it online this session)
+ * serves the right page instead of falling back to the home shell. */
+const ROUTES = ["/workout", "/history", "/program", "/progress", "/settings"];
 
 /** Gym dead zones don't fail fetches — they hang them. Anything
  * network-first must give up quickly and fall back to cache. */
@@ -15,7 +20,14 @@ function timeout(ms) {
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(PRECACHE)).then(() => self.skipWaiting()),
+    caches.open(CACHE).then(async (cache) => {
+      // Shell is critical (addAll is atomic — one failure fails install).
+      await cache.addAll(CORE);
+      // Routes are best-effort: a single unreachable page must not block the
+      // install, and they refresh on every online navigation anyway.
+      await Promise.allSettled(ROUTES.map((r) => cache.add(r)));
+      await self.skipWaiting();
+    }),
   );
 });
 

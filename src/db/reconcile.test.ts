@@ -86,3 +86,52 @@ describe("reconcileUsers (device seeded with stale config)", () => {
     expect(await db.users.toArray()).toEqual(before);
   });
 });
+
+describe("accessory progression fix (pull-ups / dips / chin-ups → manual)", () => {
+  const setInc = async (slug: string, inc: number) => {
+    const exId = `ex-user-1-${slug}`;
+    const pes = await db.programExercises.where("exerciseId").equals(exId).toArray();
+    for (const pe of pes) await db.programExercises.update(pe.id, { incrementKg: inc });
+  };
+  const incOf = async (slug: string): Promise<number | undefined> => {
+    const pe = (
+      await db.programExercises.where("exerciseId").equals(`ex-user-1-${slug}`).toArray()
+    )[0];
+    return pe?.incrementKg;
+  };
+
+  it("seeds bodyweight accessories as manual out of the box", async () => {
+    await seedIfEmpty(REAL);
+    expect(await incOf("dips")).toBe(0);
+    expect(await incOf("push-ups")).toBe(0);
+    expect(await incOf("pullups")).toBe(0);
+    expect(await incOf("chinups")).toBe(0);
+  });
+
+  it("flips accessories still at the +2.5 default to manual (0)", async () => {
+    await seedIfEmpty(REAL);
+    // Simulate a program seeded before the fix, when these auto-progressed.
+    for (const s of ["dips", "pullups", "chinups"]) await setInc(s, 2.5);
+    await reconcileUsers(REAL);
+    expect(await incOf("dips")).toBe(0);
+    expect(await incOf("pullups")).toBe(0);
+    expect(await incOf("chinups")).toBe(0);
+  });
+
+  it("never overrides an increment the lifter chose themselves", async () => {
+    await seedIfEmpty(REAL);
+    await setInc("dips", 1.25);
+    await reconcileUsers(REAL);
+    expect(await incOf("dips")).toBe(1.25);
+  });
+
+  it("runs once — a later deliberate +2.5 is not re-zeroed", async () => {
+    await seedIfEmpty(REAL);
+    await setInc("dips", 2.5);
+    await reconcileUsers(REAL); // migrates → 0 and drops the guard flag
+    expect(await incOf("dips")).toBe(0);
+    await setInc("dips", 2.5); // the lifter now WANTS auto-progression
+    await reconcileUsers(REAL); // guard prevents undoing their choice
+    expect(await incOf("dips")).toBe(2.5);
+  });
+});

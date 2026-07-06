@@ -171,10 +171,23 @@ function PlateRow({
   const logged = useLoggedValues(workoutId, ex.exercise.id, false);
   const { valueAt, setAt, knownBeyond } = useIntentOverlay(logged);
 
-  // Extra sets persist through remounts because they're derived from the DB.
+  // "+" adds a bonus set for TODAY only (an extra AMRAP/backoff), separate
+  // from the program's prescribed count — that lives in the edit sheet.
+  // Logged bonus sets persist through remounts because they're derived from
+  // the DB (knownBeyond); an empty bonus set is just this component's intent.
+  const prescribed = ex.targets.length;
   const [addedSets, setAddedSets] = useState(0);
-  const totalSets = Math.max(ex.targets.length + addedSets, knownBeyond);
+  const totalSets = Math.max(prescribed + addedSets, knownBeyond);
   const targetReps = ex.programExercise.targetReps ?? 5;
+  const bonusCount = totalSets - prescribed;
+  // Only an EMPTY trailing bonus set can be removed by "−"; a logged one must
+  // be tapped back to empty first, so a mistaken remove can't drop real reps.
+  const canRemove = bonusCount > 0 && valueAt(totalSets - 1) === null;
+  const removeBonusSet = () => {
+    if (!canRemove) return;
+    if (typeof navigator !== "undefined") navigator.vibrate?.(10);
+    setAddedSets((n) => Math.max(0, n - 1));
+  };
 
   const handle = async (i: number, next: number | null) => {
     if (!user) return;
@@ -201,23 +214,45 @@ function PlateRow({
     // Six fixed columns so the standard 5 sets + "add" share one line on any
     // phone; the plates size themselves to the column. Extra sets wrap into
     // aligned rows of six.
-    <div className="grid grid-cols-6 gap-2">
-      {Array.from({ length: totalSets }, (_, i) => (
-        <SetPlate
-          key={i}
-          target={targetReps}
-          value={valueAt(i)}
-          onChange={(n) => handle(i, n)}
-        />
-      ))}
-      <button
-        aria-label="Add a set"
-        onClick={() => setAddedSets((n) => n + 1)}
-        className="flex aspect-square w-full items-center justify-center rounded-full border-4 border-dashed border-[#2E3036] text-[22px] text-ink-faint"
-      >
-        +
-      </button>
-    </div>
+    <>
+      <div className="grid grid-cols-6 gap-2">
+        {Array.from({ length: totalSets }, (_, i) => (
+          <SetPlate
+            key={i}
+            target={targetReps}
+            value={valueAt(i)}
+            bonus={i >= prescribed}
+            onChange={(n) => handle(i, n)}
+          />
+        ))}
+        {canRemove && (
+          <button
+            aria-label="Remove the extra set"
+            onClick={removeBonusSet}
+            className="flex aspect-square w-full items-center justify-center rounded-full border-4 border-dashed border-plate-25 text-[22px] text-plate-25"
+          >
+            −
+          </button>
+        )}
+        <button
+          aria-label="Add a bonus set"
+          onClick={() => setAddedSets((n) => n + 1)}
+          className="flex aspect-square w-full items-center justify-center rounded-full border-4 border-dashed border-[#2E3036] text-[22px] text-ink-faint"
+        >
+          +
+        </button>
+      </div>
+      {bonusCount > 0 && (
+        <p className="mt-2 text-[12px] leading-relaxed text-ink-faint">
+          {bonusCount} bonus set{bonusCount === 1 ? "" : "s"} beyond the prescribed{" "}
+          {prescribed}.{" "}
+          {canRemove
+            ? "Tap − to remove the empty one."
+            : "Tap a bonus set back to empty to remove it."}{" "}
+          Change the prescription in the exercise’s details.
+        </p>
+      )}
+    </>
   );
 }
 

@@ -20,8 +20,28 @@ import type { Exercise, ProgramExercise } from "@/lib/types";
  * identity fields update in place (a device seeded by a build with
  * placeholder config heals itself), missing users are seeded fresh, and
  * working weights follow config ONLY while the user has no workout history. */
+/** One-time correction: pull-ups, chin-ups and dips shipped in the 5×5 seed
+ * auto-progressing at the default +2.5kg/session — far too fast for bodyweight
+ * accessories, so they'd stall and deload constantly. Flip them to manual, but
+ * ONLY where they're still at that wrong default (never overriding a weight the
+ * lifter set themselves), and only once (guarded), so a later manual choice of
+ * +2.5 isn't undone on the next launch. */
+async function fixAccessoryProgression(userId: string): Promise<void> {
+  const flagKey = `fix:accessoriesManual:v1:${userId}`;
+  if (await db.settings.get(flagKey)) return;
+  const exIds = ["dips", "pullups", "chinups"].map((s) => `ex-${userId}-${s}`);
+  const pes = await db.programExercises.where("exerciseId").anyOf(exIds).toArray();
+  for (const pe of pes) {
+    if (pe.incrementKg === 2.5) {
+      await db.programExercises.update(pe.id, { incrementKg: 0 });
+    }
+  }
+  await db.settings.put({ key: flagKey, value: true });
+}
+
 export async function reconcileUsers(config: UserConfig[]): Promise<void> {
   for (const cfg of config) {
+    await fixAccessoryProgression(cfg.id);
     const existing = await db.users.get(cfg.id);
     if (!existing) {
       await db.transaction(
@@ -180,7 +200,11 @@ async function seedFiveByFive(user: UserConfig) {
     pe(dayA.id, squat, 0, { workingWeightKg: w("squatA", 20) }),
     pe(dayA.id, bench, 1, { workingWeightKg: w("bench", 20) }),
     pe(dayA.id, row, 2, { workingWeightKg: w("row", 30) }),
-    pe(dayA.id, dips, 3, { sets: 3, targetReps: 10, workingWeightKg: w("dips", 0) }),
+    // Bodyweight accessories are MANUAL (incrementKg 0): you progress these
+    // by hand and much more slowly than the barbell lifts, so they never
+    // auto-add weight and stay out of linked progression (the engine skips
+    // any slot with no increment).
+    pe(dayA.id, dips, 3, { sets: 3, targetReps: 10, incrementKg: 0, workingWeightKg: w("dips", 0) }),
     pe(dayA.id, pushups, 4, { sets: 3, targetReps: 10, incrementKg: 0 }),
     pe(dayB.id, squat, 0, { workingWeightKg: w("squatB", 20) }),
     pe(dayB.id, ohp, 1, { workingWeightKg: w("ohp", 20) }),
@@ -190,8 +214,8 @@ async function seedFiveByFive(user: UserConfig) {
       workingWeightKg: w("deadlift", 40),
       restSeconds: 180,
     }),
-    pe(dayB.id, pullups, 3, { sets: 3, targetReps: 10, workingWeightKg: w("pullups", 0) }),
-    pe(dayB.id, chinups, 4, { sets: 3, targetReps: 10, workingWeightKg: w("chinups", 0) }),
+    pe(dayB.id, pullups, 3, { sets: 3, targetReps: 10, incrementKg: 0, workingWeightKg: w("pullups", 0) }),
+    pe(dayB.id, chinups, 4, { sets: 3, targetReps: 10, incrementKg: 0, workingWeightKg: w("chinups", 0) }),
   ]);
 }
 

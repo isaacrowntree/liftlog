@@ -8,6 +8,7 @@ export function SetPlate({
   value,
   onChange,
   size,
+  bonus = false,
 }: {
   target: number;
   /** null = not attempted; otherwise reps done. */
@@ -15,6 +16,9 @@ export function SetPlate({
   onChange: (next: number | null) => void;
   /** Fixed px size; omit to fill the parent's grid cell. */
   size?: number;
+  /** An extra set added beyond the prescription — marked so it doesn't read
+   * as a missing prescribed set. */
+  bonus?: boolean;
 }) {
   const next = value === null ? target : value === 0 ? null : value - 1;
 
@@ -34,7 +38,11 @@ export function SetPlate({
         ? "border-plate-15"
         : state === "zero"
           ? "border-plate-25"
-          : "border-[#2E3036]";
+          : // Empty bonus set: dashed, so it reads as "extra / removable"
+            // rather than a prescribed set you forgot to log.
+            bonus
+            ? "border-dashed border-accent/40"
+            : "border-[#2E3036]";
   const bg =
     state === "done"
       ? "bg-accent-soft"
@@ -47,7 +55,7 @@ export function SetPlate({
 
   const label =
     value === null
-      ? `Set pending, ${target} reps target. Tap to log all reps.`
+      ? `${bonus ? "Bonus set" : "Set"} pending, ${target} reps target. Tap to log all reps.`
       : `${value} of ${target} reps logged. Tap to change.`;
 
   return (

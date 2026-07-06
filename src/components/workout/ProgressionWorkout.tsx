@@ -216,24 +216,33 @@ function PlateRow({
     // aligned rows of six.
     <>
       <div className="grid grid-cols-6 gap-2">
-        {Array.from({ length: totalSets }, (_, i) => (
-          <SetPlate
-            key={i}
-            target={targetReps}
-            value={valueAt(i)}
-            bonus={i >= prescribed}
-            onChange={(n) => handle(i, n)}
-          />
-        ))}
-        {canRemove && (
-          <button
-            aria-label="Remove the extra set"
-            onClick={removeBonusSet}
-            className="flex aspect-square w-full items-center justify-center rounded-full border-4 border-dashed border-plate-25 text-[22px] text-plate-25"
-          >
-            −
-          </button>
-        )}
+        {Array.from({ length: totalSets }, (_, i) => {
+          const isBonus = i >= prescribed;
+          // iOS-style corner ✕ on the trailing EMPTY bonus set. A logged one
+          // must be tapped back to empty first — no silent data loss.
+          const removable = isBonus && i === totalSets - 1 && valueAt(i) === null;
+          return (
+            <div key={i} className="relative">
+              <SetPlate
+                target={targetReps}
+                value={valueAt(i)}
+                bonus={isBonus}
+                onChange={(n) => handle(i, n)}
+              />
+              {removable && (
+                <button
+                  aria-label="Remove bonus set"
+                  onClick={removeBonusSet}
+                  className="absolute -right-1 -top-1 flex h-[22px] w-[22px] items-center justify-center rounded-full bg-surface-2 text-ink-dim shadow ring-1 ring-line transition-transform active:scale-90"
+                >
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden>
+                    <path d="M6 6l12 12M18 6 6 18" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          );
+        })}
         <button
           aria-label="Add a bonus set"
           onClick={() => setAddedSets((n) => n + 1)}
@@ -247,7 +256,7 @@ function PlateRow({
           {bonusCount} bonus set{bonusCount === 1 ? "" : "s"} beyond the prescribed{" "}
           {prescribed}.{" "}
           {canRemove
-            ? "Tap − to remove the empty one."
+            ? "Tap the ✕ to remove it."
             : "Tap a bonus set back to empty to remove it."}{" "}
           Change the prescription in the exercise’s details.
         </p>

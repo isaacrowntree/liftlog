@@ -124,6 +124,35 @@ describe("finishWorkout (program mode progression)", () => {
     expect(ohpPe.workingWeightKg).toBe(40);
   });
 
+  it("progresses assisted (negative) dips despite a stale bodyweight set", async () => {
+    // Dips were bodyweight before assistance was set, so the first logged set
+    // still carries a 0kg stamp while the rest are at −10kg. The session weight
+    // must read as −10 (the worked weight), not 0 — otherwise the +2.5
+    // increment lands on 2.5kg instead of −7.5kg.
+    const dayA = (
+      await db.programDays.where({ programId: "program-5x5-user-1" }).toArray()
+    ).find((d) => d.name === "Workout A")!;
+    const dipsPe = (
+      await db.programExercises.where({ programDayId: dayA.id }).toArray()
+    ).find((p) => p.exerciseId === "ex-user-1-dips")!;
+    await db.programExercises.update(dipsPe.id, {
+      workingWeightKg: -10,
+      incrementKg: 2.5,
+      sets: 3,
+      targetReps: 10,
+    });
+
+    const s = await startWorkout(USER1, dayA.id);
+    const dips = s.exercises.find((e) => e.exercise.id === "ex-user-1-dips")!;
+    await logSet(s.workout.id, USER1, dips.exercise.id, 0, { weightKg: 0, reps: 10, targetReps: 10 });
+    await logSet(s.workout.id, USER1, dips.exercise.id, 1, { weightKg: -10, reps: 10, targetReps: 10 });
+    await logSet(s.workout.id, USER1, dips.exercise.id, 2, { weightKg: -10, reps: 10, targetReps: 10 });
+    await finishWorkout(s.workout.id);
+
+    const after = await db.programExercises.get(dipsPe.id);
+    expect(after?.workingWeightKg).toBe(-7.5);
+  });
+
   it("does not advance untouched exercises", async () => {
     const dayB = await db.programDays.get("day-5x5-b-user-1");
     const s = await startWorkout(USER1, dayB!.id);

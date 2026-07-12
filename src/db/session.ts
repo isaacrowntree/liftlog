@@ -255,6 +255,22 @@ function sessionSuccess(sets: SetEntry[], pe: ProgramExercise): boolean {
   );
 }
 
+/** The weight this session was worked at = the latest PRESCRIBED work set
+ * that carries a weight. Using the latest set (not the max, and never coercing
+ * a missing weight to 0) is what keeps assisted (negative) progressions
+ * correct: a stale bodyweight/0 stamp — from before assistance was set, or a
+ * set logged then the weight changed mid-workout — must not be read as "0kg,"
+ * which for an assisted lift is the HARDEST possible set and would silently
+ * reset the working weight toward zero (e.g. −10kg → +2.5kg instead of −7.5). */
+function sessionWeight(sets: SetEntry[], pe: ProgramExercise): number {
+  const weighted = sets
+    .filter((s) => !s.isWarmup && s.weightKg !== undefined)
+    .sort((a, b) => a.setIndex - b.setIndex);
+  const prescribed = weighted.filter((s) => s.setIndex < pe.sets);
+  const pick = (prescribed.length ? prescribed : weighted).at(-1);
+  return pick?.weightKg ?? pe.workingWeightKg ?? 0;
+}
+
 /** Close the workout; in program mode, advance working weights.
  * A workout with zero logged sets is discarded instead — abandoning a
  * screen you opened by accident must not consume the rotation. */
@@ -402,9 +418,8 @@ async function sessionHistory(
 
   const sessions: { weightKg: number; success: boolean; ts: number }[] = [];
   for (const [workoutId, workoutSets] of byWorkout.entries()) {
-    const weightKg = Math.max(...workoutSets.map((s) => s.weightKg ?? 0));
     sessions.push({
-      weightKg,
+      weightKg: sessionWeight(workoutSets, pe),
       success: sessionSuccess(workoutSets, pe),
       ts: workoutTs.get(workoutId) ?? 0,
     });

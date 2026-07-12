@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState, type TouchEvent as ReactTouchEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type TouchEvent as ReactTouchEvent } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@/db/db";
 import { useUser } from "@/state/UserContext";
@@ -13,7 +13,18 @@ import { Sheet } from "@/components/Sheet";
 import { scheduleBackup } from "@/lib/backupAfterEdit";
 import { roundStep } from "@/lib/weightDisplay";
 import { prWorkoutIds } from "@/lib/records";
+import { orderExercises } from "@/lib/exerciseOrder";
 import type { SetEntry } from "@/lib/types";
+
+/** exerciseId → program position for a workout's day, so History lists
+ * exercises in the same order the workout screen does. */
+async function exercisePositions(programDayId?: string): Promise<Map<string, number>> {
+  const m = new Map<string, number>();
+  if (!programDayId) return m;
+  const pes = await db.programExercises.where({ programDayId }).toArray();
+  for (const pe of pes) m.set(pe.exerciseId, pe.position);
+  return m;
+}
 
 export default function HistoryPage() {
   const { user } = useUser();
@@ -53,6 +64,15 @@ export default function HistoryPage() {
     const activeSets = active
       ? await db.sets.where({ workoutId: active.id }).toArray()
       : [];
+    // Program-position order per day, so each card lists exercises the way the
+    // workout screen does rather than by exercise id.
+    const dayIds = new Set(
+      [...recent, active].flatMap((w) => (w?.programDayId ? [w.programDayId] : [])),
+    );
+    const positionsByDay = new Map<string, Map<string, number>>();
+    for (const dayId of dayIds) {
+      positionsByDay.set(dayId, await exercisePositions(dayId));
+    }
     const exercises = await db.exercises.where({ userId: user.id }).toArray();
     const exName = new Map(exercises.map((e) => [e.id, e.name]));
     const trainedDates = new Set(finished.map((w) => w.date));
@@ -77,6 +97,7 @@ export default function HistoryPage() {
       finished,
       recent,
       setsByWorkout,
+      positionsByDay,
       exName,
       trainedDates,
       prWorkouts,
@@ -159,7 +180,11 @@ export default function HistoryPage() {
                 in progress
               </span>
             </div>
-            {[...groupByExercise(data.activeSets).entries()].map(([exId, exSets]) => (
+            {orderExercises(
+              groupByExercise(data.activeSets),
+              (data.active.programDayId && data.positionsByDay.get(data.active.programDayId)) ||
+                new Map(),
+            ).map(([exId, exSets]) => (
               <div key={exId} className="flex items-baseline justify-between py-1">
                 <span className="text-[14px]">{data.exName.get(exId) ?? "Unknown"}</span>
                 <span className="mono text-[12.5px] text-ink-dim">{summarize(exSets)}</span>
@@ -171,7 +196,10 @@ export default function HistoryPage() {
           </Link>
         )}
         {data.recent.map((w) => {
-          const byExercise = groupByExercise(data.setsByWorkout.get(w.id) ?? []);
+          const byExercise = orderExercises(
+            groupByExercise(data.setsByWorkout.get(w.id) ?? []),
+            (w.programDayId && data.positionsByDay.get(w.programDayId)) || new Map(),
+          );
           const duration =
             w.endTs && w.startTs ? Math.round((w.endTs - w.startTs) / 60000) : null;
           return (
@@ -201,7 +229,7 @@ export default function HistoryPage() {
                   {formatDate(w.date)}
                 </span>
               </div>
-              {[...byExercise.entries()].map(([exId, exSets]) => (
+              {byExercise.map(([exId, exSets]) => (
                 <div key={exId} className="flex items-baseline justify-between py-1">
                   <span className="text-[14px]">{data.exName.get(exId) ?? "Unknown"}</span>
                   <span className="mono text-[12.5px] text-ink-dim">
@@ -281,9 +309,13 @@ function WorkoutSummarySheet({
   onEdit: () => void;
   onClose: () => void;
 }) {
-  const sets =
-    useLiveQuery(() => db.sets.where({ workoutId }).toArray(), [workoutId]) ?? [];
-  const byExercise = groupByExercise(sets);
+  const loaded = useLiveQuery(async () => {
+    const sets = await db.sets.where({ workoutId }).toArray();
+    const w = await db.workouts.get(workoutId);
+    return { sets, positions: await exercisePositions(w?.programDayId) };
+  }, [workoutId]);
+  const sets = loaded?.sets ?? [];
+  const byExercise = orderExercises(groupByExercise(sets), loaded?.positions ?? new Map());
 
   return (
     <Sheet label={`${title} recap`} onClose={onClose}>
@@ -292,7 +324,7 @@ function WorkoutSummarySheet({
         <span className="mono text-xs text-ink-faint">{date}</span>
       </div>
       <div className="glass p-4">
-        {[...byExercise.entries()].map(([exId, exSets]) => (
+        {byExercise.map(([exId, exSets]) => (
           <div key={exId} className="flex items-baseline justify-between py-1">
             <span className="text-[14px]">{exName.get(exId) ?? "Unknown"}</span>
             <span className="mono text-[12.5px] text-ink-dim">{summarize(exSets)}</span>
@@ -329,9 +361,13 @@ function EditWorkoutSheet({
 }) {
   // Self-loading by id so any workout opens — including old ones a calendar
   // tap reaches that aren't in the recent list.
-  const sets =
-    useLiveQuery(() => db.sets.where({ workoutId }).toArray(), [workoutId]) ?? [];
-  const groups = [...groupForEdit(sets).entries()];
+  const loaded = useLiveQuery(async () => {
+    const rows = await db.sets.where({ workoutId }).toArray();
+    const w = await db.workouts.get(workoutId);
+    return { sets: rows, positions: await exercisePositions(w?.programDayId) };
+  }, [workoutId]);
+  const sets = useMemo(() => loaded?.sets ?? [], [loaded]);
+  const groups = orderExercises(groupForEdit(sets), loaded?.positions ?? new Map());
 
   type Row = { weight: string; reps: string; seconds: string };
   const [draft, setDraft] = useState<Record<string, Row>>({});

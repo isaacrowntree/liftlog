@@ -6,7 +6,6 @@ import { useUser } from "@/state/UserContext";
 import {
   nextProgramDay,
   startWorkout,
-  finishWorkout,
   buildSessionPlan,
   setWorkoutNote,
   type Session,
@@ -20,7 +19,7 @@ import { ConfirmSheet } from "@/components/ConfirmSheet";
 import { Sheet } from "@/components/Sheet";
 import { useWakeLock } from "@/lib/useWakeLock";
 import { activeWorkoutKey } from "@/db/activeWorkout";
-import { markJustFinished } from "@/lib/justFinished";
+import { completeWorkout } from "@/lib/finishFlow";
 import { sessionTonnageKg, workSetCount } from "@/lib/workoutStats";
 
 export default function WorkoutPage() {
@@ -109,21 +108,12 @@ function WorkoutScreen() {
     if (finishing.current) return; // double-tap guard
     finishing.current = true;
     timer.stop();
-    await finishWorkout(session.workout.id); // empty workout → discarded
-    localStorage.removeItem(activeWorkoutKey(user.id));
-    if (workSets === 0) {
-      router.replace("/"); // nothing saved — nothing to celebrate
-      return;
-    }
-    // Queue the workout for device sync, then push + snapshot in the
-    // background; offline just means next time online.
-    const [{ enqueueFinishedWorkout, flushOutbox }, { backupToCloud }] =
-      await Promise.all([import("@/db/sync"), import("@/lib/cloudBackup")]);
-    await enqueueFinishedWorkout(user.id, session.workout.id);
-    void flushOutbox(user.id, user.email).catch(() => {});
-    void backupToCloud(user.id, user.email).catch(() => {});
-    markJustFinished({ workoutId: session.workout.id, tonnageKg });
-    router.replace("/history"); // back must not restart a workout
+    // Local commit + congrats + navigation happen instantly; sync/backup are
+    // fired detached, so a slow connection can't freeze the Finish flow.
+    await completeWorkout(
+      { userId: user.id, email: user.email, workoutId: session.workout.id, workSets, tonnageKg },
+      { navigate: (path) => router.replace(path) },
+    );
   };
 
   /** Minimize keeps everything — including an active rest countdown. */

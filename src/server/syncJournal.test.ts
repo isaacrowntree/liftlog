@@ -4,6 +4,7 @@ import {
   handlePush,
   handlePull,
   handleReset,
+  handleTombstones,
   type JournalOp,
 } from "./syncJournal";
 
@@ -111,5 +112,32 @@ describe("journal epoch", () => {
     const after = handlePull(store, 0).epoch;
 
     expect(after).not.toBe(before);
+  });
+});
+
+/** R2's latest.json is merged by union, which can add rows but never drop
+ * one — so a deleted workout would walk back in from whichever device still
+ * holds it. The journal's deleteWorkout ops are the authority on what's gone. */
+describe("tombstones for the backup merge", () => {
+  it("lists the workouts the journal says are deleted", () => {
+    const store = new MemoryOpStore();
+    handlePush(store, [
+      { opId: "w1", kind: "finishedWorkout", payload: { workout: { id: "w1" } } },
+      { opId: "del:w1", kind: "deleteWorkout", payload: { workoutId: "w1" } },
+      { opId: "w2", kind: "finishedWorkout", payload: { workout: { id: "w2" } } },
+    ]);
+    expect(handleTombstones(store).workoutIds).toEqual(["w1"]);
+  });
+
+  it("is empty for a journal with nothing deleted", () => {
+    const store = new MemoryOpStore();
+    handlePush(store, [op("a")]);
+    expect(handleTombstones(store).workoutIds).toEqual([]);
+  });
+
+  it("ignores delete ops with no workoutId rather than emitting undefined", () => {
+    const store = new MemoryOpStore();
+    handlePush(store, [{ opId: "del:x", kind: "deleteWorkout", payload: {} }]);
+    expect(handleTombstones(store).workoutIds).toEqual([]);
   });
 });

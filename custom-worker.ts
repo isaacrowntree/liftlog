@@ -9,6 +9,7 @@ import {
   handlePush,
   handlePull,
   handleReset,
+  handleTombstones,
   type JournalOp,
 } from "./src/server/syncJournal";
 import type { SqlLike } from "./src/server/syncJournal";
@@ -36,6 +37,11 @@ export class SyncJournal {
     // serves only GET and POST, so reaching this needs the DO binding.
     if (request.method === "DELETE") {
       return Response.json(handleReset(this.store));
+    }
+    // The backup merge unions rows and so can never drop one; the journal is
+    // the only authority on what was deleted.
+    if (url.pathname === "/tombstones") {
+      return Response.json(handleTombstones(this.store));
     }
     const since = Number(url.searchParams.get("since") ?? 0) || 0;
     return Response.json(handlePull(this.store, since));

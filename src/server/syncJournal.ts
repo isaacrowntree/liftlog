@@ -48,6 +48,21 @@ export function handlePull(
   return { ops: store.since(from), seq: store.maxSeq(), epoch: store.epoch() };
 }
 
+/** Which workouts the journal says are deleted.
+ *
+ * R2's latest.json is merged by union so a device that's behind can't erase
+ * rows it never saw — but union can only ever ADD, so a deleted workout would
+ * walk back in from whichever device still holds it. The journal is the only
+ * authority on what's gone, so the backup merge asks it. */
+export function handleTombstones(store: OpStore): { workoutIds: string[] } {
+  const ids = store
+    .since(0)
+    .filter((o) => o.kind === "deleteWorkout")
+    .map((o) => (o.payload as { workoutId?: unknown } | null)?.workoutId)
+    .filter((id): id is string => typeof id === "string" && id !== "");
+  return { workoutIds: [...new Set(ids)] };
+}
+
 /** Empty the journal.
  *
  * The log is append-only and has no delete op, so an op that should never have

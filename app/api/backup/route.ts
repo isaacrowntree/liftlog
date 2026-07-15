@@ -27,6 +27,31 @@ function bucket(): BackupBucket | null {
   return (env as { BACKUPS?: BackupBucket }).BACKUPS ?? null;
 }
 
+interface JournalStub {
+  fetch(input: string): Promise<Response>;
+}
+interface JournalNamespace {
+  idFromName(name: string): unknown;
+  get(id: unknown): JournalStub;
+}
+
+/** Which workouts are deleted, per the journal.
+ *
+ * latest.json is merged by union so a device that's behind can't erase rows it
+ * never saw — but union can only ADD, so without this a deleted workout walks
+ * back in from whichever device still holds it. Failing closed (returning
+ * none) would resurrect deletions, so a journal we can't reach aborts the
+ * publish rather than quietly undoing one. */
+async function tombstonesFor(email: string): Promise<string[]> {
+  const { env } = getCloudflareContext();
+  const ns = (env as { SYNC_JOURNAL?: JournalNamespace }).SYNC_JOURNAL;
+  if (!ns) return [];
+  const journal = ns.get(ns.idFromName(email.toLowerCase()));
+  const res = await journal.fetch("https://journal/tombstones");
+  const body = (await res.json()) as { workoutIds?: string[] };
+  return body.workoutIds ?? [];
+}
+
 export async function POST(req: Request) {
   const email = identityFrom(req);
   if (!email) {
@@ -37,7 +62,13 @@ export async function POST(req: Request) {
     return Response.json({ error: "Backup storage not configured" }, { status: 503 });
   }
   try {
-    const summary = await storeBackup(backups, email, await req.text(), new Date());
+    const summary = await storeBackup(
+      backups,
+      email,
+      await req.text(),
+      new Date(),
+      await tombstonesFor(email),
+    );
     return Response.json({ ok: true, ...summary });
   } catch (e) {
     return Response.json(

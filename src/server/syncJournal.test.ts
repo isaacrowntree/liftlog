@@ -87,3 +87,29 @@ describe("journal reset", () => {
     expect(after.seq).toBe(2);
   });
 });
+
+/** A cursor is only meaningful against the journal that issued it. Reset the
+ * journal and every device is holding a number from a log that no longer
+ * exists — pointing PAST the rebuilt one, so `seq > cursor` matches nothing
+ * and the new ops are invisible forever. The epoch is how a device notices. */
+describe("journal epoch", () => {
+  it("reports a stable epoch across pulls", () => {
+    const store = new MemoryOpStore();
+    const e = handlePull(store, 0).epoch;
+    expect(e).toBeTruthy();
+    expect(handlePull(store, 0).epoch).toBe(e);
+    handlePush(store, [op("a")]);
+    expect(handlePull(store, 0).epoch).toBe(e);
+  });
+
+  it("issues a new epoch after a reset, so devices know to replay", () => {
+    const store = new MemoryOpStore();
+    handlePush(store, [op("a"), op("b")]);
+    const before = handlePull(store, 0).epoch;
+
+    handleReset(store);
+    const after = handlePull(store, 0).epoch;
+
+    expect(after).not.toBe(before);
+  });
+});

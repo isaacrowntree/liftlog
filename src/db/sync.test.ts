@@ -10,6 +10,7 @@ import {
   pullAndApply,
   applyOp,
   syncCursorKey,
+  syncEpochKey,
 } from "./sync";
 
 const USER1 = "user-1";
@@ -180,5 +181,112 @@ describe("pull and apply", () => {
     vi.stubGlobal("fetch", fetchMock);
     await pullAndApply(USER1, "lifter-one@example.com");
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain("since=7");
+  });
+});
+
+/** A cursor only means something against the journal generation that issued
+ * it. After a journal reset the rebuilt log restarts at seq 1, so a device
+ * still holding cursor 4 asks for `seq > 4` and is told "nothing" — forever.
+ * The epoch is how it notices and replays. */
+describe("journal epoch", () => {
+  it("replays from zero when the journal reports a new epoch", async () => {
+    const workoutId = await finishRealWorkout();
+    const op = await buildFinishedWorkoutOp(workoutId);
+
+    // Device B: has synced before, cursor is way past the rebuilt journal.
+    await db.delete();
+    await db.open();
+    await seedIfEmpty();
+    localStorage.setItem(syncCursorKey(USER1), "4");
+    localStorage.setItem(syncEpochKey(USER1), "old-generation");
+
+    const seen: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      seen.push(url);
+      const since = Number(new URL(url, "http://x").searchParams.get("since"));
+      const ops = since < 1 ? [{ ...op, seq: 1 }] : [];
+      return new Response(JSON.stringify({ ops, seq: 1, epoch: "new-generation" }), { status: 200 });
+    }));
+
+    const { applied } = await pullAndApply(USER1, "lifter-one@example.com");
+
+    // It re-asked from 0 rather than trusting the stale cursor...
+    expect(seen.some((u) => u.includes("since=4"))).toBe(true);
+    expect(seen.some((u) => u.includes("since=0"))).toBe(true);
+    // ...and the op the stale cursor would have hidden was applied.
+    expect(applied).toBe(1);
+    expect(await db.workouts.get(workoutId)).toBeDefined();
+    expect(localStorage.getItem(syncEpochKey(USER1))).toBe("new-generation");
+  });
+
+  it("does not replay when the epoch is unchanged", async () => {
+    localStorage.setItem(syncCursorKey(USER1), "7");
+    localStorage.setItem(syncEpochKey(USER1), "same");
+    const fetchMock = vi.fn(async (_input: string | URL | Request) =>
+      new Response(JSON.stringify({ ops: [], seq: 7, epoch: "same" }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await pullAndApply(USER1, "lifter-one@example.com");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("since=7");
+  });
+});
+
+/** The journal is append-only, so a workout that should never have been
+ * recorded (e.g. one logged purely to advance the program) can only be undone
+ * by a further op. Deleting it must also roll back the working weight it
+ * advanced — otherwise the history says one thing and the program another. */
+describe("deleteWorkout op", () => {
+  it("removes the workout, its sets, and rolls back the weight it advanced", async () => {
+    const workoutId = await finishRealWorkout();
+    expect(await db.sets.where({ workoutId }).count()).toBe(5);
+    const pe = (await db.programExercises.where({ programDayId: "day-5x5-b-user-1" }).sortBy("position"))[0];
+    expect(pe.workingWeightKg).toBe(30); // advanced by the workout
+
+    const applied = await applyOp(USER1, {
+      opId: `del:${workoutId}`,
+      kind: "deleteWorkout",
+      payload: { workoutId, weights: [{ programExerciseId: pe.id, workingWeightKg: 27.5 }] },
+    } as never);
+
+    expect(applied).toBe(true);
+    expect(await db.workouts.get(workoutId)).toBeUndefined();
+    expect(await db.sets.where({ workoutId }).count()).toBe(0);
+    expect((await db.programExercises.get(pe.id))?.workingWeightKg).toBe(27.5);
+  });
+
+  // Delete-before-create is the normal ordering across devices: a device that
+  // does not hold the workout yet must still remember the deletion, or the
+  // workout walks back in the moment its finishedWorkout op arrives.
+  it("records the tombstone even when the workout isn't here yet", async () => {
+    const workoutId = await finishRealWorkout();
+    const op = await buildFinishedWorkoutOp(workoutId);
+
+    await db.delete();
+    await db.open();
+    await seedIfEmpty();
+
+    // Delete arrives first, for a workout this device has never seen.
+    const deleted = await applyOp(USER1, {
+      opId: `del:${workoutId}`,
+      kind: "deleteWorkout",
+      payload: { workoutId },
+    } as never);
+    expect(deleted).toBe(true);
+
+    // The create arrives afterwards and must NOT resurrect it.
+    const recreated = await applyOp(USER1, op!);
+    expect(recreated).toBe(false);
+    expect(await db.workouts.get(workoutId)).toBeUndefined();
+  });
+
+  it("is idempotent — replaying the delete is harmless", async () => {
+    const workoutId = await finishRealWorkout();
+    const op = { opId: `del:${workoutId}`, kind: "deleteWorkout", payload: { workoutId } } as never;
+    await applyOp(USER1, op);
+    await expect(applyOp(USER1, op)).resolves.not.toThrow();
+    expect(await db.workouts.get(workoutId)).toBeUndefined();
   });
 });

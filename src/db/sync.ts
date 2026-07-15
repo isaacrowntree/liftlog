@@ -17,14 +17,40 @@ export interface FinishedWorkoutPayload {
   exercises: Exercise[];
 }
 
-export interface SyncOp {
+/** Undo a workout that should never have been recorded. `weights` rolls back
+ * the progression it advanced — deleting the history without it would leave
+ * the program prescribing a weight nothing in the log justifies. */
+export interface DeleteWorkoutPayload {
+  workoutId: string;
+  weights?: Array<{ programExerciseId: string; workingWeightKg: number }>;
+}
+
+export interface FinishedWorkoutOp {
   opId: string;
   kind: "finishedWorkout";
   payload: FinishedWorkoutPayload;
 }
+export interface DeleteWorkoutOp {
+  opId: string;
+  kind: "deleteWorkout";
+  payload: DeleteWorkoutPayload;
+}
+export type SyncOp = FinishedWorkoutOp | DeleteWorkoutOp;
+
+/** The journal has no delete primitive, so a deletion is itself an op. Keyed
+ * distinctly from the workout's own opId, which is the bare workout id. */
+export function deleteWorkoutOpId(workoutId: string): string {
+  return `del:${workoutId}`;
+}
 
 export function syncCursorKey(userId: string): string {
   return `liftlog.syncCursor.${userId}`;
+}
+
+/** Which generation of the journal our cursor belongs to. A cursor is only
+ * meaningful against the log that issued it — see pullAndApply. */
+export function syncEpochKey(userId: string): string {
+  return `liftlog.syncEpoch.${userId}`;
 }
 
 function devHeaders(email: string): HeadersInit {
@@ -34,7 +60,9 @@ function devHeaders(email: string): HeadersInit {
 }
 
 /** Snapshot a finished workout into a sync op. Null for unfinished/missing. */
-export async function buildFinishedWorkoutOp(workoutId: string): Promise<SyncOp | null> {
+export async function buildFinishedWorkoutOp(
+  workoutId: string,
+): Promise<FinishedWorkoutOp | null> {
   const workout = await db.workouts.get(workoutId);
   if (!workout || workout.endTs === undefined) return null;
   const sets = await db.sets.where({ workoutId }).toArray();
@@ -118,22 +146,60 @@ export async function flushOutbox(
 
 /** Apply one journal op to this device. Existing workouts are never touched. */
 export async function applyOp(userId: string, op: SyncOp): Promise<boolean> {
+  if (op.kind === "deleteWorkout") return applyDeleteWorkout(userId, op.payload);
   if (op.kind !== "finishedWorkout") return false;
-  const { workout, sets, weights } = op.payload;
-  if (workout.userId !== userId) return false;
-  if (await db.workouts.get(workout.id)) return false;
 
-  const { exercises } = op.payload;
+  const { workout, sets, weights, exercises } = op.payload;
+  // The journal is per-Access-identity but the avatar switcher means an op can
+  // legitimately belong to the household's other user. Never adopt it.
+  if (workout.userId !== userId) return false;
+
+  let created = false;
   await db.transaction(
     "rw",
-    [db.workouts, db.sets, db.programExercises, db.exercises],
+    [db.workouts, db.sets, db.programExercises, db.exercises, db.tombstones],
     async () => {
+      // Both checks live INSIDE the transaction: two tabs share one
+      // IndexedDB, so a check outside it races a concurrent delete and
+      // resurrects the workout.
+      if (await db.tombstones.get(workout.id)) return;
+      if (await db.workouts.get(workout.id)) return;
+
       for (const ex of exercises ?? []) {
         if (!(await db.exercises.get(ex.id))) await db.exercises.put(ex);
       }
       await db.workouts.put(workout);
       if (sets.length) await db.sets.bulkPut(sets);
       for (const w of weights) {
+        const pe = await db.programExercises.get(w.programExerciseId);
+        if (pe) await db.programExercises.update(pe.id, { workingWeightKg: w.workingWeightKg });
+      }
+      created = true;
+    },
+  );
+  return created;
+}
+
+async function applyDeleteWorkout(
+  userId: string,
+  payload: DeleteWorkoutPayload,
+): Promise<boolean> {
+  const { workoutId, weights } = payload;
+  if (!workoutId) return false;
+
+  await db.transaction(
+    "rw",
+    [db.workouts, db.sets, db.programExercises, db.tombstones, db.outbox],
+    async () => {
+      // Recorded unconditionally — including when we don't hold the workout.
+      // Delete-before-create is the normal cross-device ordering, and without
+      // the tombstone the workout walks back in when its create op arrives.
+      await db.tombstones.put({ workoutId, userId, deletedAt: Date.now() });
+      await db.sets.where({ workoutId }).delete();
+      await db.workouts.delete(workoutId);
+      // Don't re-push a workout we've just been told to forget.
+      await db.outbox.where({ opId: workoutId }).delete();
+      for (const w of weights ?? []) {
         const pe = await db.programExercises.get(w.programExerciseId);
         if (pe) await db.programExercises.update(pe.id, { workingWeightKg: w.workingWeightKg });
       }
@@ -149,17 +215,38 @@ export async function pullAndApply(
   email: string,
 ): Promise<{ ok: boolean; applied: number }> {
   const since = Number(localStorage.getItem(syncCursorKey(userId)) ?? 0) || 0;
-  try {
-    const res = await fetch(`/api/sync?since=${since}`, {
+
+  interface PullBody {
+    ops?: Array<SyncOp & { seq: number }>;
+    seq?: number;
+    epoch?: string;
+  }
+  const pull = async (from: number): Promise<PullBody | null> => {
+    const res = await fetch(`/api/sync?since=${from}`, {
       headers: { "x-requested-with": "XMLHttpRequest", ...devHeaders(email) },
       signal: AbortSignal.timeout(10_000),
     });
-    if (!res.ok) return { ok: false, applied: 0 };
-    const body = (await res.json().catch(() => null)) as
-      | { ops?: Array<SyncOp & { seq: number }>; seq?: number }
-      | null;
+    if (!res.ok) return null;
+    const parsed = (await res.json().catch(() => null)) as PullBody | null;
     // Same reasoning as the outbox flush: an Access login page is a 200.
-    if (typeof body?.seq !== "number") return { ok: false, applied: 0 };
+    return typeof parsed?.seq === "number" ? parsed : null;
+  };
+
+  try {
+    let body = await pull(since);
+    if (!body) return { ok: false, applied: 0 };
+
+    // A cursor is only meaningful against the journal generation that issued
+    // it. If the journal was rebuilt, our cursor points into a log that no
+    // longer exists — usually PAST the new one, so `seq > cursor` matches
+    // nothing and we'd silently never sync again. Replay from the start;
+    // applyOp skips whatever we already hold, so it's cheap and safe.
+    const epoch = body.epoch;
+    if (epoch && epoch !== localStorage.getItem(syncEpochKey(userId))) {
+      body = await pull(0);
+      if (!body) return { ok: false, applied: 0 };
+      localStorage.setItem(syncEpochKey(userId), epoch);
+    }
 
     let applied = 0;
     for (const op of body.ops ?? []) {

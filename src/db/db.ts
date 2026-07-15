@@ -27,6 +27,14 @@ export interface OutboxRow {
   payload: unknown;
 }
 
+/** A workout deleted somewhere. Remembered so a finishedWorkout op arriving
+ * later — the normal cross-device ordering — can't walk it back in. */
+export interface Tombstone {
+  workoutId: string;
+  userId: string;
+  deletedAt: number;
+}
+
 export class LiftLogDB extends Dexie {
   users!: EntityTable<User, "id">;
   exercises!: EntityTable<Exercise, "id">;
@@ -37,6 +45,7 @@ export class LiftLogDB extends Dexie {
   sets!: EntityTable<SetEntry, "id">;
   settings!: EntityTable<Setting, "key">;
   outbox!: EntityTable<OutboxRow, "id">;
+  tombstones!: EntityTable<Tombstone, "workoutId">;
 
   constructor(name = "liftlog") {
     super(name);
@@ -58,6 +67,11 @@ export class LiftLogDB extends Dexie {
     // v3: outbox — offline queue of sync ops headed for the journal.
     this.version(3).stores({
       outbox: "++id, userId, opId",
+    });
+    // v4: tombstones — the journal is append-only, so a delete has to be a
+    // fact we remember, not an absence.
+    this.version(4).stores({
+      tombstones: "workoutId, userId",
     });
   }
 }

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import "fake-indexeddb/auto";
 import { db } from "./db";
 import { seedIfEmpty } from "./seed";
+import { setAccessIdentity } from "@/lib/identityGate";
 import { startWorkout, logSet, finishWorkout } from "./session";
 import {
   buildFinishedWorkoutOp,
@@ -11,6 +12,7 @@ import {
   applyOp,
   syncCursorKey,
   syncEpochKey,
+  deleteWorkoutOpId,
 } from "./sync";
 
 const USER1 = "user-1";
@@ -20,6 +22,7 @@ beforeEach(async () => {
   await db.open();
   await seedIfEmpty();
   localStorage.clear();
+  setAccessIdentity(null); // unresolved identity — the permissive default
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -325,5 +328,123 @@ describe("linked progression crosses devices", () => {
 
     expect(await sq("day-5x5-b-user-1")).toBe(authorB);
     expect(await sq("day-5x5-a-user-1")).toBe(authorA); // the sibling the op must carry
+  });
+});
+
+/** The journal is addressed by the SERVER-side Access identity, but the ops
+ * carry whichever avatar is selected here. finishFlow calls flushOutbox
+ * directly — not through syncNow — so syncNow's gate doesn't cover it. Without
+ * a gate of its own, finishing a workout as the other avatar posts it to the
+ * signed-in identity's journal, gets a valid ack, and DRAINS the outbox: the
+ * op is junk in an append-only log that will never serve it back, and the only
+ * copy of the workout is gone. That is the incident this journal exists to
+ * prevent, on the path that runs after every workout. */
+describe("flushOutbox identity gate", () => {
+  it("refuses to push an avatar that isn't the signed-in identity", async () => {
+    const workoutId = await finishRealWorkout();
+    await enqueueFinishedWorkout(USER1, workoutId);
+    setAccessIdentity("someone-else@example.com");
+
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ seq: 1, accepted: 1 }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const r = await flushOutbox(USER1, "lifter-one@example.com");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(r.ok).toBe(false);
+    expect(await db.outbox.count()).toBe(1); // the only copy survives
+  });
+
+  it("pushes normally when the avatar IS the signed-in identity", async () => {
+    const workoutId = await finishRealWorkout();
+    await enqueueFinishedWorkout(USER1, workoutId);
+    setAccessIdentity("lifter-one@example.com");
+
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      new Response(JSON.stringify({ seq: 1, accepted: 1 }), { status: 200 }),
+    ));
+
+    expect((await flushOutbox(USER1, "lifter-one@example.com")).ok).toBe(true);
+    expect(await db.outbox.count()).toBe(0);
+  });
+});
+
+/** A journal replay must land where the first pass landed.
+ *
+ * Replay is not exotic: autoRestoreIfEmpty restores from R2 and never sets the
+ * cursor, so EVERY fresh device replays the whole journal from 0 onto a
+ * snapshot that already reflects it. The epoch path replays by design too, and
+ * has already run in production. */
+describe("replaying the journal", () => {
+  const peSquatA = async () =>
+    ((await db.programExercises.where({ programDayId: "day-5x5-a-user-1" }).sortBy("position"))[0])!;
+
+  const delOp = (peId: string, kg: number) =>
+    ({
+      opId: deleteWorkoutOpId("ghost"),
+      kind: "deleteWorkout",
+      payload: { workoutId: "ghost", weights: [{ programExerciseId: peId, workingWeightKg: kg }] },
+    }) as never;
+
+  const finishOp = (peId: string, kg: number) =>
+    ({
+      opId: "later-workout",
+      kind: "finishedWorkout",
+      payload: {
+        workout: {
+          id: "later-workout", userId: USER1, dayLabel: "Workout A", date: "2026-07-12",
+          programDayId: "day-5x5-a-user-1", startTs: 1, endTs: 2,
+        },
+        sets: [], weights: [{ programExerciseId: peId, workingWeightKg: kg }], exercises: [],
+      },
+    }) as never;
+
+  it("a delete then a finish converges on the finish's weight, and stays there", async () => {
+    const pe = (await peSquatA()).id;
+
+    await applyOp(USER1, delOp(pe, 25)); // rolls back
+    await applyOp(USER1, finishOp(pe, 27.5)); // then corrects
+    expect((await peSquatA()).workingWeightKg).toBe(27.5);
+
+    // Replay the same two ops onto state that already reflects them.
+    await applyOp(USER1, delOp(pe, 25));
+    await applyOp(USER1, finishOp(pe, 27.5));
+    expect((await peSquatA()).workingWeightKg).toBe(27.5);
+  });
+
+  /** GUARD. Working weight has writers that emit no op at all — the layoff
+   * deload button, manual edits in /program, mid-workout edits. A replay must
+   * not re-assert an op's stale snapshot over them. This passes today and is
+   * exactly what "apply weights even when the workout exists" would break. */
+  it("does not revert an un-journalled weight edit", async () => {
+    const workoutId = await finishRealWorkout();
+    const op = await buildFinishedWorkoutOp(workoutId);
+    const pe = (await db.programExercises
+      .where({ programDayId: "day-5x5-b-user-1" }).sortBy("position"))[0]!;
+
+    // Hand edit, the way /program does it. No op exists for this.
+    await db.programExercises.update(pe.id, { workingWeightKg: 42.5 });
+
+    await applyOp(USER1, op!); // replay
+
+    expect((await db.programExercises.get(pe.id))?.workingWeightKg).toBe(42.5);
+  });
+
+  /** GUARD. A tombstoned workout's finish op must not advance the weight —
+   * the workout is gone, so the progression it claimed never happened. */
+  it("does not advance the weight for a workout that was deleted", async () => {
+    const pe = (await peSquatA()).id;
+    const before = (await peSquatA()).workingWeightKg;
+
+    await applyOp(USER1, {
+      opId: deleteWorkoutOpId("later-workout"),
+      kind: "deleteWorkout",
+      payload: { workoutId: "later-workout" },
+    } as never);
+    await applyOp(USER1, finishOp(pe, 99));
+
+    expect((await peSquatA()).workingWeightKg).toBe(before);
   });
 });

@@ -7,6 +7,7 @@
 
 import { db } from "./db";
 import type { Exercise, SetEntry, Workout } from "@/lib/types";
+import { mayWriteAs } from "@/lib/identityGate";
 
 /** A slot's progression state as the author left it. `sets`/`deloadCount` are
  * optional so ops written before they were carried still apply. */
@@ -141,6 +142,13 @@ export async function flushOutbox(
   userId: string,
   email: string,
 ): Promise<{ ok: boolean }> {
+  // The gate lives HERE, not only in syncNow: finishFlow calls this directly
+  // after every workout. The journal is addressed by the server-side Access
+  // identity, so pushing another avatar's ops files them under the wrong user
+  // — and the ack is valid, so we'd drain the outbox against a journal that
+  // will never serve them back. The outbox is the only copy.
+  if (!mayWriteAs(email)) return { ok: false };
+
   const rows = await db.outbox.where({ userId }).toArray();
   if (rows.length === 0) return { ok: true }; // nothing queued is not a failure
   try {
@@ -212,6 +220,11 @@ async function applyDeleteWorkout(
     "rw",
     [db.workouts, db.sets, db.programExercises, db.tombstones, db.outbox],
     async () => {
+      // Have we already applied THIS delete? The tombstone is written in this
+      // same transaction, so its absence is exactly "first sight" — there is
+      // no window where one is true and the other isn't.
+      const firstSight = !(await db.tombstones.get(workoutId));
+
       // Recorded unconditionally — including when we don't hold the workout.
       // Delete-before-create is the normal cross-device ordering, and without
       // the tombstone the workout walks back in when its create op arrives.
@@ -220,7 +233,13 @@ async function applyDeleteWorkout(
       await db.workouts.delete(workoutId);
       // Don't re-push a workout we've just been told to forget.
       await db.outbox.where({ opId: workoutId }).delete();
-      for (const w of weights ?? []) await applyWeight(w);
+
+      // Roll back the progression this workout advanced — but only once.
+      // Deleting rows is naturally idempotent; rolling a weight back is not.
+      // On a replay the weight has moved on — a later op corrected it, or the
+      // lifter edited it by hand — and re-asserting a rollback from the past
+      // would silently undo that. Replay must land where the first pass landed.
+      if (firstSight) for (const w of weights ?? []) await applyWeight(w);
     },
   );
   return true;
